@@ -1,0 +1,283 @@
+##############################################################################
+# Playwright CI
+#
+# Jobs:
+#   regression        — PR open/sync and push to main  (QA env,   5 workers)
+#   regression-report — Upload & publish reports via reusable workflow
+#   smoke             — Push to main only              (Prod env,  2 workers)
+#   smoke-report      — Upload & publish reports via reusable workflow
+#   manual            — workflow_dispatch with user inputs
+#   manual-report     — Upload & publish reports via reusable workflow
+#
+# Each test job uploads a single "{suite}-artifacts" artifact containing
+# allure-results/ and playwright-report/. The reusable _publish-reports.yml
+# workflow then generates the Allure report and uploads both HTML artifacts.
+#
+# Env var reference:
+#   CI=true — enables strict mode (forbidOnly, retries) in playwright.config.ts
+##############################################################################
+
+name: Playwright Tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: 'Update visual snapshots'
+        type: boolean
+        default: false
+      tags:
+        description: 'Test tag to run'
+        required: true
+        type: choice
+        options:
+          - '@smoke'
+          - '@regression'
+          - '@e2e'
+          - '@a11y'
+          - '@navigation'
+          - '@login'
+          - '@homePage'
+          - '@search'
+          - '@productDetails'
+          - '@productList'
+          - '@checkout'
+          - '@cart'
+          - '@contact'
+          - '@registration'
+          - '@accountDetails'
+      workers:
+        description: 'Number of parallel workers'
+        required: true
+        default: '5'
+        type: choice
+        options: ['1', '2', '3', '4']
+      browser:
+        description: 'Browser to run tests on'
+        required: true
+        default: 'chromium'
+        type: choice
+        options: [chromium, firefox, webkit]
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'qa'
+        type: choice
+        options: [qa, prod]
+env:
+  CI: 'true'
+  BASE_URL: ${{ vars.BASE_URL }}
+  USERNAME: ${{ secrets.USERNAME }}
+  PASSWORD: ${{ secrets.PASSWORD }}
+  USER_ID: ${{ secrets.USER_ID }}
+  API_URL: ${{ vars.API_BASE_URL }}
+  GRAFANA_PROM_URL: ${{ secrets.GRAFANA_PROM_URL }}
+  GRAFANA_USER: ${{ secrets.GRAFANA_USER }}
+  GRAFANA_API_KEY: ${{ secrets.GRAFANA_API_KEY }}
+  LOG_LEVEL: 'error'
+
+concurrency:
+  # Cancel runs for the same PR
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1: Regression — PR open/sync and push to main, QA environment
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  regression:
+    name: Regression Suite (Chromium / QA)
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: self-hosted
+    timeout-minutes: 20
+    environment: qa
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+        #run: npx playwright install chrome --with-deps
+
+      - name: Run Regression tests
+        run: npx playwright test --project=chromium --workers=5 --grep "@regression" ${{ github.event.inputs.update_snapshots == 'true' && '--update-snapshots' || '' }}
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-artifacts
+          path: |
+            allure-results/
+            playwright-report/
+          retention-days: 14
+
+      - name: Push metrics to Grafana
+        if: always()
+        env:
+          SUITE: regression
+        run: npx tsx scripts/push-test-metrics.ts
+      - name: Push logs to Grafana
+        if: always()
+        env:
+          SUITE: regression
+        run: npx tsx scripts/push-test-logs.ts
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2: Regression report (reusable)
+  # ─────────────────────────────────────────────────────────────────────────────
+  regression-report:
+    needs: regression
+    if: always() && (github.event_name == 'push' || github.event_name == 'pull_request')
+    uses: ./.github/workflows/_publish-reports.yml
+    with:
+      suite-name: regression
+      #deploy-to-pages: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+      deploy-to-pages: false
+      pages-destination: ''
+    permissions:
+      contents: write
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 3: Smoke — push to main only, Prod environment
+  # ─────────────────────────────────────────────────────────────────────────────
+  smoke:
+    name: Smoke Suite (Chromium / Prod)
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: self-hosted
+    timeout-minutes: 10
+    environment: prod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Run Smoke tests
+
+        run: npx playwright test --project=chromium --workers=2 --grep "@smoke"
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-artifacts
+          path: |
+            allure-results/
+            playwright-report/
+            test-results/
+          retention-days: 14
+
+      - name: Push metrics to Grafana
+        if: always()
+        env:
+          SUITE: smoke
+        run: npx tsx scripts/push-test-metrics.ts
+      - name: Push logs to Grafana
+        if: always()
+        env:
+          SUITE: smoke
+        run: npx tsx scripts/push-test-logs.ts
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 4: Smoke report (reusable)
+  # ─────────────────────────────────────────────────────────────────────────────
+  smoke-report:
+    needs: smoke
+    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    uses: ./.github/workflows/_publish-reports.yml
+    with:
+      suite-name: smoke
+      deploy-to-pages: false
+      pages-destination: ''
+    permissions:
+      contents: write
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 5: Manual — workflow_dispatch with user-supplied inputs
+  # ─────────────────────────────────────────────────────────────────────────────
+  manual:
+    name: 'Manual: ${{ github.event.inputs.tags }} on ${{ github.event.inputs.browser }} / ${{ github.event.inputs.environment }}'
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted
+    timeout-minutes: 15
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install ${{ github.event.inputs.browser }} --with-deps
+
+      - name: Run Manual tests
+        run: |
+          npx playwright test \
+            --project=${{ github.event.inputs.browser }} \
+            --workers=${{ github.event.inputs.workers }} \
+            --grep="${{ github.event.inputs.tags }}"
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: manual-artifacts
+          path: |
+            allure-results/
+            playwright-report/
+          retention-days: 14
+      - name: Push metrics to Grafana
+        if: always()
+        env:
+          SUITE: ${{ github.event.inputs.tags }}
+        run: npx tsx scripts/push-test-metrics.ts
+      - name: Push logs to Grafana
+        if: always()
+        env:
+          SUITE: ${{ github.event.inputs.tags }}
+        run: npx tsx scripts/push-test-logs.ts
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 6: Manual report (reusable)
+  # ─────────────────────────────────────────────────────────────────────────────
+  manual-report:
+    needs: manual
+    if: always() && github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/_publish-reports.yml
+    with:
+      suite-name: manual
+      deploy-to-pages: false
+      pages-destination: ''
+    permissions:
+      contents: write
