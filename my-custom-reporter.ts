@@ -60,45 +60,6 @@ class MyReporter implements Reporter {
       }
     };
     if (this.rootSuite) printSuite(this.rootSuite);
-
-    //const printSuite = (s: Suite, indent = '', suitetitle: string| undefined) => {
-
-    //s.tests.forEach(t => console.log(`${indent}  Test: ${t.title} - ${t.results[0].status}`));
-    //   this.rootSuite?.suites?.forEach(child => {
-    //     console.log(`${child.type?? 'FullProject'}: ${child.title}`);
-    //     child.tests.length && console.log(` Tests in this suite: ${child.tests.length}`);
-    //     child.suites?.forEach(t => {
-    //       switch (t.tests.results[0].status) {
-    //         case 'passed':
-    //             console.log(`${''}    Test: ${t.title} - PASSED`);
-    //             break;
-    //         case 'failed':
-    //             console.log(`${''}     Test: ${t.title} - FAILED`);
-    //             break;
-    //         case 'skipped':
-    //             console.log(`${''}     Test: ${t.title} - SKIPPED`);
-    //             break;
-    //         default:
-    //             console.log(`${''}     Test: ${t.title} - UNKNOWN STATUS`);
-    //     }
-    //     });
-    //     // child.tests?.forEach(t => {
-    //     //     switch (t.results[0].status) {
-    //     //         case 'passed':
-    //     //             console.log(`${indent}    Test: ${t.title} - PASSED`);
-    //     //             break;
-    //     //         case 'failed':
-    //     //             console.log(`${indent}    Test: ${t.title} - FAILED`);
-    //     //             break;
-    //     //         case 'skipped':
-    //     //             console.log(`${indent}    Test: ${t.title} - SKIPPED`);
-    //     //             break;
-    //     //         default:
-    //     //             console.log(`${indent}    Test: ${t.title} - UNKNOWN STATUS`);
-    //     //     }
-
-    //   }
-    // );
   }
 }
 export default MyReporter;
